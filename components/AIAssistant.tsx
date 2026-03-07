@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useRef, useEffect, ErrorInfo } from 'react';
-import { Bot, Upload, Sparkles, RefreshCw, AlertCircle, Image as ImageIcon, Eye, Code, Save, Trash2, Smartphone, Tablet, Monitor } from 'lucide-react';
+import { Bot, Upload, Sparkles, RefreshCw, AlertCircle, Image as ImageIcon, Eye, Code, Save, Trash2, Smartphone, Tablet, Monitor, Copy, Check } from 'lucide-react';
 import { codeToHtml } from 'shiki';
 
 // Error Boundary Component
@@ -54,12 +54,14 @@ export function AIAssistant() {
   const [image, setImage] = useState<string | null>(null);
   const [response, setResponse] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingProject, setLoadingProject] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [previewSize, setPreviewSize] = useState<'mobile' | 'tablet' | 'desktop' | 'widescreen'>('desktop');
   const [projects, setProjects] = useState<any[]>([]);
   const [highlightedHtml, setHighlightedHtml] = useState('');
   const [highlightedTsx, setHighlightedTsx] = useState('');
+  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -128,15 +130,27 @@ export function AIAssistant() {
   };
 
   const loadProject = (p: any) => {
-    setPrompt(p.prompt);
-    setImage(p.image);
-    setResponse(p.response);
+    setLoadingProject(p.id);
+    setTimeout(() => {
+      setPrompt(p.prompt);
+      setImage(p.image);
+      setResponse(p.response);
+      setLoadingProject(null);
+    }, 500);
   };
 
   const deleteProject = (id: number) => {
-    const updated = projects.filter(p => p.id !== id);
-    setProjects(updated);
-    localStorage.setItem('ai_assistant_projects', JSON.stringify(updated));
+    if (confirm('Are you sure you want to delete this project?')) {
+      const updated = projects.filter(p => p.id !== id);
+      setProjects(updated);
+      localStorage.setItem('ai_assistant_projects', JSON.stringify(updated));
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const parseResponse = (res: string) => {
@@ -177,7 +191,10 @@ export function AIAssistant() {
               <h3 className="font-semibold text-sm">Saved Projects</h3>
               {projects.map(p => (
                 <div key={p.id} className="flex items-center justify-between p-2 hover:bg-zinc-100 rounded-lg">
-                  <button onClick={() => loadProject(p)} className="text-xs text-left truncate">{p.timestamp} - {p.prompt.substring(0, 15)}...</button>
+                  <button onClick={() => loadProject(p)} className="text-xs text-left truncate flex-1 flex items-center gap-2">
+                    {loadingProject === p.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+                    {p.timestamp} - {p.prompt.substring(0, 15)}...
+                  </button>
                   <button onClick={() => deleteProject(p.id)} className="text-zinc-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
                 </div>
               ))}
@@ -192,8 +209,11 @@ export function AIAssistant() {
                   <button onClick={() => setShowPreview(!showPreview)} className="flex items-center gap-2 text-sm bg-zinc-900 text-white px-4 py-2 rounded-lg hover:bg-zinc-800 whitespace-nowrap">
                     {showPreview ? <Code className="w-4 h-4" /> : <Eye className="w-4 h-4" />} {showPreview ? 'View Code' : 'View Preview'}
                   </button>
+                  <button onClick={() => copyToClipboard(parseResponse(response).tsx)} className="flex items-center gap-2 text-sm bg-zinc-100 px-4 py-2 rounded-lg hover:bg-zinc-200 whitespace-nowrap">
+                    {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />} Copy Code
+                  </button>
                   {showPreview && (
-                    <div className="flex gap-1 ml-auto border border-zinc-200 rounded-xl p-1">
+                    <div className="flex gap-1 ml-auto border border-zinc-200 rounded-xl p-1 transition-all duration-300">
                       <button onClick={() => setPreviewSize('mobile')} className={`p-2 rounded-lg ${previewSize === 'mobile' ? 'bg-zinc-100' : ''}`}><Smartphone className="w-4 h-4" /></button>
                       <button onClick={() => setPreviewSize('tablet')} className={`p-2 rounded-lg ${previewSize === 'tablet' ? 'bg-zinc-100' : ''}`}><Tablet className="w-4 h-4" /></button>
                       <button onClick={() => setPreviewSize('desktop')} className={`p-2 rounded-lg ${previewSize === 'desktop' ? 'bg-zinc-100' : ''}`}><Monitor className="w-4 h-4" /></button>
@@ -202,7 +222,7 @@ export function AIAssistant() {
                   )}
                 </div>
                 {showPreview ? (
-                  <div className="w-full flex justify-center border border-zinc-100 rounded-xl p-4 bg-zinc-50 overflow-x-auto">
+                  <div className="w-full flex justify-center border border-zinc-100 rounded-xl p-4 bg-zinc-50 overflow-x-auto transition-all duration-300">
                     <iframe srcDoc={`<html><head><script src="https://cdn.tailwindcss.com"></script></head><body>${parseResponse(response).html}</body></html>`} style={{ width: previewWidths[previewSize], transition: 'width 0.3s' }} className="h-[500px] border border-zinc-200 rounded-xl bg-white shadow-inner" />
                   </div>
                 ) : (

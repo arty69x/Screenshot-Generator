@@ -4,36 +4,25 @@ const SYSTEM_PROMPT = `
 Pixel-Perfect Screenshot → Tailwind / TSX Assistant
 
 SYSTEM ROLE
-You are an advanced UI reverse-engineering engine and frontend architect.
-Your job is to analyze UI screenshots and reconstruct the interface as pixel-perfect DOM structures.
+You are an expert UI engineer and visual designer specializing in pixel-perfect reconstruction.
+Your goal is to transform UI screenshots into production-ready Tailwind CSS and React (TSX) code in a SINGLE ATTEMPT.
 
 PRIMARY OBJECTIVE
-From an uploaded screenshot, detect and output:
-• every UI node
-• node hierarchy
-• width and height
-• x/y position
-• content inside nodes
-• layer stacking order
-• layout structure
-• styling information
-
-Then generate:
-1. Tailwind HTML
-2. Tailwind TSX component
+Analyze the screenshot with extreme precision. You must detect and reconstruct:
+• Node Hierarchy & Layout: Detect all UI nodes, their hierarchy, stacking order, and layout structure (Flexbox/Grid).
+• Dimensions & Positions: Precise width, height, and x/y positioning.
+• Content & Styling: Exact text content, typography (font-size, weight, line-height), colors (Tailwind palette), spacing (padding/margin), and borders.
+• Interactive Elements: Buttons, links, inputs, toggles with hover/focus states.
+• Decorative Layers: Backgrounds, gradients, overlays, and shadows.
 
 ABSOLUTE RULES
-You must:
-• detect all visible UI nodes
-• preserve exact layout relationships
-• preserve pixel spacing
-• preserve container structure
-• reconstruct a full DOM tree
-• Apply standard UI patterns:
-  - Buttons: Add hover:bg-opacity-80, transition-all, cursor-pointer.
-  - Inputs: Add focus:ring-2, focus:ring-indigo-500.
-  - Interactive elements: Add hover:scale-105, transition-transform where appropriate.
-  - Use standard Tailwind utility classes for all styling.
+1. Pixel-Perfect: Map all dimensions and spacing to Tailwind's scale.
+2. Tailwind-First: Use ONLY Tailwind utility classes. NO inline styles.
+3. Interactive: Add hover states, focus states, and transitions to all interactive elements.
+4. Responsive: Use mobile-first design (e.g., w-full md:w-1/2).
+5. Modular: Break the UI into reusable components.
+6. Single Attempt: Your output must be complete and visually identical to the screenshot.
+7. Image URLs: Use high-quality Unsplash URLs (e.g., 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80'). Do not use placeholders.
 
 RESPONSE FORMAT (LOCKED)
 The AI must return ONLY:
@@ -45,7 +34,7 @@ The AI must return ONLY:
 No explanations.
 `;
 
-async function generateContent(apiKey: string, prompt: string, image: string, section: string) {
+async function generateContent(apiKey: string, prompt: string, image: string) {
   const ai = new GoogleGenAI({ apiKey });
   
   const contents: any[] = [];
@@ -57,7 +46,7 @@ async function generateContent(apiKey: string, prompt: string, image: string, se
       },
     });
   }
-  contents.push({ text: `Analyze this screenshot section: ${section || 'Full UI'}. ${prompt || "Generate pixel-perfect Tailwind HTML and TSX code."}` });
+  contents.push({ text: prompt || "Generate pixel-perfect Tailwind HTML and TSX code." });
 
   return await ai.models.generateContentStream({
     model: 'gemini-3.1-pro-preview',
@@ -70,35 +59,57 @@ async function generateContent(apiKey: string, prompt: string, image: string, se
 
 export async function POST(req: Request) {
   try {
-    const { prompt, image, section } = await req.json();
+    const { prompt, image } = await req.json();
     const primaryKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
     const subKey = process.env.NEXT_PUBLIC_GEMINI_SUB_API_KEY;
 
     let stream;
-    try {
-      if (!primaryKey) throw new Error('Primary key missing');
-      stream = await generateContent(primaryKey, prompt, image, section);
-    } catch (error) {
-      console.warn('Primary API key failed, trying fallback:', error);
-      if (!subKey) throw new Error('Both primary and fallback API keys failed or are missing.');
-      stream = await generateContent(subKey, prompt, image, section);
+    let lastError;
+
+    // Try primary key
+    if (primaryKey) {
+      try {
+        stream = await generateContent(primaryKey, prompt, image);
+      } catch (error) {
+        lastError = error;
+        console.warn('Primary API key failed:', error);
+      }
+    }
+
+    // Try fallback key if primary failed or missing
+    if (!stream && subKey) {
+      try {
+        stream = await generateContent(subKey, prompt, image);
+      } catch (error) {
+        lastError = error;
+        console.warn('Fallback API key failed:', error);
+      }
+    }
+
+    if (!stream) {
+      throw lastError || new Error('Both primary and fallback API keys failed or are missing.');
     }
 
     const encoder = new TextEncoder();
     const readableStream = new ReadableStream({
       async start(controller) {
-        for await (const chunk of stream) {
-          controller.enqueue(encoder.encode(chunk.text));
+        try {
+          for await (const chunk of stream) {
+            controller.enqueue(encoder.encode(chunk.text));
+          }
+        } catch (error) {
+          console.error('Streaming error:', error);
+        } finally {
+          controller.close();
         }
-        controller.close();
       },
     });
 
     return new Response(readableStream, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error generating code:', error);
-    return new Response(JSON.stringify({ error: 'Error generating code. Please check your API keys.' }), { status: 500 });
+    return new Response(JSON.stringify({ error: error.message || 'Error generating code. Please check your API keys.' }), { status: 500 });
   }
 }
