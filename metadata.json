@@ -1,0 +1,5 @@
+{
+  "name": "AI Website Generator",
+  "description": "An AI-powered website generator with version history, content generation, and one-click deployment.",
+  "requestFramePermissions": []
+}
