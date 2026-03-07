@@ -1,7 +1,6 @@
 'use client';
 import React, { useState, useRef, useEffect, ErrorInfo } from 'react';
 import { Bot, Upload, Sparkles, RefreshCw, AlertCircle, Image as ImageIcon, Eye, Code, Save, Trash2, Smartphone, Tablet, Monitor, Copy, Check } from 'lucide-react';
-import { codeToHtml } from 'shiki';
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
@@ -36,7 +35,7 @@ ABSOLUTE RULES
 4. Responsive: Use mobile-first design (e.g., w-full md:w-1/2).
 5. Modular: Break the UI into reusable components.
 6. Single Attempt: Your output must be complete and visually identical to the screenshot.
-7. Image URLs: Use high-quality Unsplash URLs (e.g., 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80'). Do not use placeholders.
+7. Image Reliability: For all images, use high-quality Unsplash URLs. ALWAYS include an 'onError' handler that sets the image 'src' to a reliable fallback URL (e.g., 'https://picsum.photos/seed/fallback/800/600') if the primary image fails to load.
 
 RESPONSE FORMAT (LOCKED)
 The AI must return ONLY:
@@ -52,15 +51,15 @@ export function AIAssistant() {
   const [mounted, setMounted] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [image, setImage] = useState<string | null>(null);
-  const [response, setResponse] = useState('');
+  const [editableHtml, setEditableHtml] = useState('');
+  const [editableTsx, setEditableTsx] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingProject, setLoadingProject] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [previewSize, setPreviewSize] = useState<'mobile' | 'tablet' | 'desktop' | 'widescreen'>('desktop');
   const [projects, setProjects] = useState<any[]>([]);
-  const [highlightedHtml, setHighlightedHtml] = useState('');
-  const [highlightedTsx, setHighlightedTsx] = useState('');
+  const [response, setResponse] = useState('');
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -73,10 +72,28 @@ export function AIAssistant() {
   useEffect(() => {
     if (response) {
       const { html, tsx } = parseResponse(response);
-      codeToHtml(html, { lang: 'html', theme: 'vitesse-dark' }).then(setHighlightedHtml);
-      codeToHtml(tsx, { lang: 'tsx', theme: 'vitesse-dark' }).then(setHighlightedTsx);
+      setEditableHtml(html);
+      setEditableTsx(tsx);
     }
   }, [response]);
+
+  const formatCode = async () => {
+    try {
+      const res = await fetch('/api/format', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: editableHtml, tsx: editableTsx }),
+      });
+      
+      if (!res.ok) throw new Error('Formatting failed');
+      const { html, tsx } = await res.json();
+      setEditableHtml(html);
+      setEditableTsx(tsx);
+    } catch (e) {
+      console.error("Formatting failed", e);
+      setError("Formatting failed. Please check your code for syntax errors.");
+    }
+  };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -123,7 +140,7 @@ export function AIAssistant() {
   };
 
   const saveProject = () => {
-    const newProject = { id: Date.now(), prompt, image, response, timestamp: new Date().toLocaleString() };
+    const newProject = { id: Date.now(), prompt, image, html: editableHtml, tsx: editableTsx, timestamp: new Date().toLocaleString() };
     const updated = [newProject, ...projects];
     setProjects(updated);
     localStorage.setItem('ai_assistant_projects', JSON.stringify(updated));
@@ -134,7 +151,8 @@ export function AIAssistant() {
     setTimeout(() => {
       setPrompt(p.prompt);
       setImage(p.image);
-      setResponse(p.response);
+      setEditableHtml(p.html);
+      setEditableTsx(p.tsx);
       setLoadingProject(null);
     }, 500);
   };
@@ -223,14 +241,17 @@ export function AIAssistant() {
                 </div>
                 {showPreview ? (
                   <div className="w-full flex justify-center border border-zinc-100 rounded-xl p-4 bg-zinc-50 overflow-x-auto transition-all duration-300">
-                    <iframe srcDoc={`<html><head><script src="https://cdn.tailwindcss.com"></script></head><body>${parseResponse(response).html}</body></html>`} style={{ width: previewWidths[previewSize], transition: 'width 0.3s' }} className="h-[500px] border border-zinc-200 rounded-xl bg-white shadow-inner" />
+                    <iframe srcDoc={`<html><head><script src="https://cdn.tailwindcss.com"></script></head><body>${editableHtml}</body></html>`} style={{ width: previewWidths[previewSize], transition: 'width 0.3s' }} className="h-[500px] border border-zinc-200 rounded-xl bg-white shadow-inner" />
                   </div>
                 ) : (
-                  <div className="p-6 bg-zinc-950 text-zinc-100 rounded-xl overflow-x-auto text-sm font-mono shadow-inner">
-                    <h4 className="font-bold mb-4 text-zinc-400">HTML</h4>
-                    <div dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
-                    <h4 className="font-bold mb-4 mt-8 text-zinc-400">TSX</h4>
-                    <div dangerouslySetInnerHTML={{ __html: highlightedTsx }} />
+                  <div className="p-6 bg-zinc-950 text-zinc-100 rounded-xl overflow-x-auto text-sm font-mono shadow-inner space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h4 className="font-bold text-zinc-400">HTML</h4>
+                      <button onClick={formatCode} className="text-xs bg-zinc-800 px-2 py-1 rounded hover:bg-zinc-700">Format</button>
+                    </div>
+                    <textarea value={editableHtml} onChange={(e) => setEditableHtml(e.target.value)} className="w-full h-64 bg-transparent outline-none font-mono text-xs" />
+                    <h4 className="font-bold mt-8 text-zinc-400">TSX</h4>
+                    <textarea value={editableTsx} onChange={(e) => setEditableTsx(e.target.value)} className="w-full h-64 bg-transparent outline-none font-mono text-xs" />
                   </div>
                 )}
               </div>

@@ -22,7 +22,7 @@ ABSOLUTE RULES
 4. Responsive: Use mobile-first design (e.g., w-full md:w-1/2).
 5. Modular: Break the UI into reusable components.
 6. Single Attempt: Your output must be complete and visually identical to the screenshot.
-7. Image URLs: Use high-quality Unsplash URLs (e.g., 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80'). Do not use placeholders.
+7. Image Reliability: For all images, use high-quality Unsplash URLs. ALWAYS include an 'onError' handler that sets the image 'src' to a reliable fallback URL (e.g., 'https://picsum.photos/seed/fallback/800/600') if the primary image fails to load.
 
 RESPONSE FORMAT (LOCKED)
 The AI must return ONLY:
