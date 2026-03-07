@@ -1,37 +1,42 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
-import { Bot, Send, Upload, Copy, Eye, Code, Download, Sparkles, RefreshCw } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
+import React, { useState, useRef, useEffect, ErrorInfo } from 'react';
+import { Bot, Upload, Sparkles, RefreshCw, AlertCircle, Image as ImageIcon, Eye, Code, Save, Trash2, Smartphone, Tablet, Monitor } from 'lucide-react';
+import { codeToHtml } from 'shiki';
+
+// Error Boundary Component
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: any) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError(error: any) { return { hasError: true }; }
+  componentDidCatch(error: any, errorInfo: ErrorInfo) { console.error("UI Error:", error, errorInfo); }
+  render() {
+    if (this.state.hasError) return <div className="p-4 bg-red-100 text-red-800 rounded-lg">Something went wrong. <button onClick={() => window.location.reload()} className="underline">Reload</button></div>;
+    return this.props.children;
+  }
+}
 
 const SYSTEM_PROMPT = `
 Pixel-Perfect Screenshot → Tailwind / TSX Assistant
 
 SYSTEM ROLE
-You are an advanced UI reverse-engineering engine and frontend architect.
-Your job is to analyze UI screenshots and reconstruct the interface as pixel-perfect DOM structures.
+You are an expert UI engineer and visual designer specializing in pixel-perfect reconstruction.
+Your goal is to transform UI screenshots into production-ready Tailwind CSS and React (TSX) code in a SINGLE ATTEMPT.
 
 PRIMARY OBJECTIVE
-From an uploaded screenshot, detect and output:
-• every UI node
-• node hierarchy
-• width and height
-• x/y position
-• content inside nodes
-• layer stacking order
-• layout structure
-• styling information
-
-Then generate:
-1. Tailwind HTML
-2. Tailwind TSX component
+Analyze the screenshot with extreme precision. You must detect and reconstruct:
+• Node Hierarchy & Layout: Detect all UI nodes, their hierarchy, stacking order, and layout structure (Flexbox/Grid).
+• Dimensions & Positions: Precise width, height, and x/y positioning.
+• Content & Styling: Exact text content, typography (font-size, weight, line-height), colors (Tailwind palette), spacing (padding/margin), and borders.
+• Interactive Elements: Buttons, links, inputs, toggles with hover/focus states.
+• Decorative Layers: Backgrounds, gradients, overlays, and shadows.
 
 ABSOLUTE RULES
-You must:
-• detect all visible UI nodes
-• preserve exact layout relationships
-• preserve pixel spacing
-• preserve container structure
-• reconstruct a full DOM tree
+1. Pixel-Perfect: Map all dimensions and spacing to Tailwind's scale.
+2. Tailwind-First: Use ONLY Tailwind utility classes. NO inline styles.
+3. Interactive: Add hover states, focus states, and transitions to all interactive elements.
+4. Responsive: Use mobile-first design (e.g., w-full md:w-1/2).
+5. Modular: Break the UI into reusable components.
+6. Single Attempt: Your output must be complete and visually identical to the screenshot.
+7. Image URLs: Use high-quality Unsplash URLs (e.g., 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80'). Do not use placeholders.
 
 RESPONSE FORMAT (LOCKED)
 The AI must return ONLY:
@@ -49,59 +54,89 @@ export function AIAssistant() {
   const [image, setImage] = useState<string | null>(null);
   const [response, setResponse] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [previewSize, setPreviewSize] = useState<'mobile' | 'tablet' | 'desktop' | 'widescreen'>('desktop');
+  const [projects, setProjects] = useState<any[]>([]);
+  const [highlightedHtml, setHighlightedHtml] = useState('');
+  const [highlightedTsx, setHighlightedTsx] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setMounted(true);
+    const saved = localStorage.getItem('ai_assistant_projects');
+    if (saved) setProjects(JSON.parse(saved));
   }, []);
+
+  useEffect(() => {
+    if (response) {
+      const { html, tsx } = parseResponse(response);
+      codeToHtml(html, { lang: 'html', theme: 'vitesse-dark' }).then(setHighlightedHtml);
+      codeToHtml(tsx, { lang: 'tsx', theme: 'vitesse-dark' }).then(setHighlightedTsx);
+    }
+  }, [response]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setImage(reader.result as string);
-      };
+      reader.onloadend = () => setImage(reader.result as string);
       reader.readAsDataURL(file);
     }
   };
 
   const handleGenerate = async () => {
-    if (!prompt && !image) return;
+    if (!prompt && !image) {
+      setError('Please provide an image or a prompt.');
+      return;
+    }
     setLoading(true);
+    setError(null);
+    setResponse('');
+    
     try {
-      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error('Gemini API key is missing. Please configure NEXT_PUBLIC_GEMINI_API_KEY.');
-      }
-      const ai = new GoogleGenAI({ apiKey });
-      
-      const contents: any[] = [];
-      if (image) {
-        contents.push({
-          inlineData: {
-            mimeType: 'image/png',
-            data: image.split(',')[1],
-          },
-        });
-      }
-      contents.push({ text: prompt || "Analyze this screenshot and generate pixel-perfect Tailwind HTML and TSX code." });
-
-      const result = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: { parts: contents },
-        config: {
-          systemInstruction: SYSTEM_PROMPT,
-        },
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, image }),
       });
-      setResponse(result.text || 'No code generated.');
-    } catch (error) {
-      console.error('Error generating code:', error);
-      setResponse(error instanceof Error ? error.message : 'Error generating code.');
+      
+      if (res.status === 401 || res.status === 403) throw new Error('Invalid or expired API Key. Please check configuration.');
+      if (res.status === 429) throw new Error('Rate limit exceeded. Please try again later.');
+      if (!res.ok) throw new Error(`Generation failed (Status: ${res.status}). Please try again.`);
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      
+      while (true) {
+        const { done, value } = await reader!.read();
+        if (done) break;
+        setResponse((prev) => prev + decoder.decode(value, { stream: true }));
+      }
+    } catch (error: any) {
+      setError(error.message || 'An unexpected network error occurred. Please check your connection.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const saveProject = () => {
+    const newProject = { id: Date.now(), prompt, image, response, timestamp: new Date().toLocaleString() };
+    const updated = [newProject, ...projects];
+    setProjects(updated);
+    localStorage.setItem('ai_assistant_projects', JSON.stringify(updated));
+  };
+
+  const loadProject = (p: any) => {
+    setPrompt(p.prompt);
+    setImage(p.image);
+    setResponse(p.response);
+  };
+
+  const deleteProject = (id: number) => {
+    const updated = projects.filter(p => p.id !== id);
+    setProjects(updated);
+    localStorage.setItem('ai_assistant_projects', JSON.stringify(updated));
   };
 
   const parseResponse = (res: string) => {
@@ -113,78 +148,76 @@ export function AIAssistant() {
     };
   };
 
-  const { html, tsx } = parseResponse(response);
+  if (!mounted) return <div className="p-8 text-center">Loading...</div>;
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
-
-  const downloadFile = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-  };
-
-  if (!mounted) return <div className="bg-white p-6 rounded-xl shadow-sm border border-zinc-200 h-64">Loading...</div>;
+  const previewWidths = { mobile: '375px', tablet: '768px', desktop: '100%', widescreen: '1440px' };
 
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-zinc-200">
-      <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-        <Bot className="w-5 h-5" /> Pixel-Perfect AI Assistant
-      </h2>
-      <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
-      <button onClick={() => fileInputRef.current?.click()} className="w-full flex items-center justify-center gap-2 border border-zinc-300 py-2 px-4 rounded-lg mb-4 hover:bg-zinc-50">
-        <Upload className="w-4 h-4" /> {image ? 'Change Image' : 'Upload Screenshot'}
-      </button>
-      {image && <img src={image} alt="Upload" className="w-full h-32 object-contain mb-4 rounded-lg" />}
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="Describe specific details or layout requirements..."
-        className="w-full h-24 p-3 border border-zinc-300 rounded-lg mb-4"
-      />
-      <button
-        onClick={handleGenerate}
-        disabled={loading}
-        className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-2 px-4 rounded-lg hover:bg-indigo-700 disabled:bg-zinc-400"
-      >
-        {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} 
-        {loading ? 'Analyzing & Generating...' : 'Generate Pixel-Perfect Code'}
-      </button>
-      {response && (
-        <div className="mt-4 space-y-2">
-          <div className="flex gap-2 flex-wrap">
-            <button onClick={() => copyToClipboard(html)} className="flex items-center gap-1 text-sm bg-zinc-200 px-3 py-1 rounded hover:bg-zinc-300">
-              <Copy className="w-4 h-4" /> Copy HTML
-            </button>
-            <button onClick={() => copyToClipboard(tsx)} className="flex items-center gap-1 text-sm bg-zinc-200 px-3 py-1 rounded hover:bg-zinc-300">
-              <Copy className="w-4 h-4" /> Copy TSX
-            </button>
-            <button onClick={() => downloadFile(html, 'index.html')} className="flex items-center gap-1 text-sm bg-zinc-200 px-3 py-1 rounded hover:bg-zinc-300">
-              <Download className="w-4 h-4" /> Download HTML
-            </button>
-            <button onClick={() => setShowPreview(!showPreview)} className="flex items-center gap-1 text-sm bg-zinc-200 px-3 py-1 rounded hover:bg-zinc-300">
-              {showPreview ? <Code className="w-4 h-4" /> : <Eye className="w-4 h-4" />} {showPreview ? 'Show Code' : 'Preview'}
-            </button>
-          </div>
-          {showPreview ? (
-            <iframe
-              srcDoc={`<html><head><script src="https://cdn.tailwindcss.com"></script></head><body>${html}</body></html>`}
-              className="w-full h-96 border border-zinc-300 rounded-lg"
-            />
-          ) : (
-            <div className="p-4 bg-zinc-900 text-zinc-100 rounded-lg overflow-x-auto text-sm font-mono">
-              <h4 className="font-bold mb-2">HTML</h4>
-              <pre className="mb-4">{html}</pre>
-              <h4 className="font-bold mb-2">TSX</h4>
-              <pre>{tsx}</pre>
+    <ErrorBoundary>
+      <div className="min-h-screen bg-zinc-50 p-4 md:p-8">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-4 bg-white p-6 rounded-2xl shadow-sm border border-zinc-200 space-y-6">
+            <h1 className="text-2xl font-bold flex items-center gap-2 text-zinc-900">
+              <Bot className="w-6 h-6 text-indigo-600" /> Pixel Engine
+            </h1>
+            <div className="space-y-4">
+              <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
+              <button onClick={() => fileInputRef.current?.click()} className="w-full flex items-center justify-center gap-2 border border-zinc-200 py-3 px-4 rounded-xl hover:bg-zinc-50">
+                <Upload className="w-4 h-4" /> {image ? 'Change Image' : 'Upload Screenshot'}
+              </button>
+              {image && <img src={image} alt="Upload" className="w-full h-40 object-cover rounded-xl border border-zinc-200" />}
+              <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe UI details..." className="w-full p-4 border border-zinc-200 rounded-xl h-24 focus:ring-2 focus:ring-indigo-500 outline-none" />
+              <button onClick={handleGenerate} disabled={loading} className="w-full flex items-center justify-center gap-2 bg-zinc-900 text-white py-3 px-4 rounded-xl hover:bg-zinc-800 disabled:bg-zinc-400 font-medium">
+                {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} 
+                {loading ? 'Analyzing...' : 'Generate Code'}
+              </button>
+              {response && <button onClick={saveProject} className="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-3 px-4 rounded-xl hover:bg-indigo-100 font-medium"><Save className="w-4 h-4" /> Save Project</button>}
             </div>
-          )}
+            <div className="border-t pt-4 space-y-2">
+              <h3 className="font-semibold text-sm">Saved Projects</h3>
+              {projects.map(p => (
+                <div key={p.id} className="flex items-center justify-between p-2 hover:bg-zinc-100 rounded-lg">
+                  <button onClick={() => loadProject(p)} className="text-xs text-left truncate">{p.timestamp} - {p.prompt.substring(0, 15)}...</button>
+                  <button onClick={() => deleteProject(p.id)} className="text-zinc-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-8 space-y-6">
+            {error && <div className="bg-red-50 text-red-700 p-4 rounded-xl border border-red-200">{error}</div>}
+            {response && (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-zinc-200 space-y-4">
+                <div className="flex gap-2 items-center border-b pb-4 overflow-x-auto">
+                  <button onClick={() => setShowPreview(!showPreview)} className="flex items-center gap-2 text-sm bg-zinc-900 text-white px-4 py-2 rounded-lg hover:bg-zinc-800 whitespace-nowrap">
+                    {showPreview ? <Code className="w-4 h-4" /> : <Eye className="w-4 h-4" />} {showPreview ? 'View Code' : 'View Preview'}
+                  </button>
+                  {showPreview && (
+                    <div className="flex gap-1 ml-auto border border-zinc-200 rounded-xl p-1">
+                      <button onClick={() => setPreviewSize('mobile')} className={`p-2 rounded-lg ${previewSize === 'mobile' ? 'bg-zinc-100' : ''}`}><Smartphone className="w-4 h-4" /></button>
+                      <button onClick={() => setPreviewSize('tablet')} className={`p-2 rounded-lg ${previewSize === 'tablet' ? 'bg-zinc-100' : ''}`}><Tablet className="w-4 h-4" /></button>
+                      <button onClick={() => setPreviewSize('desktop')} className={`p-2 rounded-lg ${previewSize === 'desktop' ? 'bg-zinc-100' : ''}`}><Monitor className="w-4 h-4" /></button>
+                      <button onClick={() => setPreviewSize('widescreen')} className={`p-2 rounded-lg ${previewSize === 'widescreen' ? 'bg-zinc-100' : ''}`}><Monitor className="w-4 h-4" />+</button>
+                    </div>
+                  )}
+                </div>
+                {showPreview ? (
+                  <div className="w-full flex justify-center border border-zinc-100 rounded-xl p-4 bg-zinc-50 overflow-x-auto">
+                    <iframe srcDoc={`<html><head><script src="https://cdn.tailwindcss.com"></script></head><body>${parseResponse(response).html}</body></html>`} style={{ width: previewWidths[previewSize], transition: 'width 0.3s' }} className="h-[500px] border border-zinc-200 rounded-xl bg-white shadow-inner" />
+                  </div>
+                ) : (
+                  <div className="p-6 bg-zinc-950 text-zinc-100 rounded-xl overflow-x-auto text-sm font-mono shadow-inner">
+                    <h4 className="font-bold mb-4 text-zinc-400">HTML</h4>
+                    <div dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+                    <h4 className="font-bold mb-4 mt-8 text-zinc-400">TSX</h4>
+                    <div dangerouslySetInnerHTML={{ __html: highlightedTsx }} />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }
